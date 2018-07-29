@@ -1,0 +1,65 @@
+/**
+ * @ClassName: Main
+ * @Description: 启动状态采集服务器
+ * @author Hao Wei
+ * @date 2016年5月4日 下午1:14:47
+ * 
+ */
+public class Main {
+	public static int SERVER_PORT;
+
+	public static void loadConfig() {
+		Properties pro = new Properties();
+		try {
+			pro.load(Main.class.getClassLoader().getResourceAsStream(
+					"config/system.properties"));
+			SERVER_PORT = Integer.parseInt(pro.getProperty("sys.port"));
+		} catch (IOException e) {
+			e.printStackTrace();
+			System.exit(1);
+		}
+
+	}
+
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) throws Exception {
+		loadConfig();// 加载配置文件信息
+		// 获取系统的CPU核心数，作为线程数配置参考参数
+		int processors = Runtime.getRuntime().availableProcessors();
+		System.out.println("当前系统的cpu核数是"+processors);
+		EventLoopGroup bossGroup = new NioEventLoopGroup(1);
+		EventLoopGroup workerGroup = new NioEventLoopGroup(4);
+		try {
+			ServerBootstrap b = new ServerBootstrap();// 启动器
+			b.group(bossGroup, workerGroup)
+					// 指定BOSS和工作线程循环组
+			.channel(NioServerSocketChannel.class)
+			.childHandler(new CollectorChannelInitializer())
+			.option(ChannelOption.SO_BACKLOG, 128)
+			.childOption(ChannelOption.SO_KEEPALIVE, true);
+
+			ChannelFuture f = b.bind(SERVER_PORT).sync();// 绑定监听端口
+			System.out.println("Collector Server start up complete");
+
+			// 设置队列消费者
+			//疑点 这里能不能把ExecutorService换成Executor或ScheduledExecutorService
+			ExecutorService dealingThreadPool = Executors.newFixedThreadPool(1);
+			for (int i = 0; i < 48; i++) {
+				dealingThreadPool.execute(new StatusMessageProcessor());
+			}
+			
+			// 设置队列监控
+			ScheduledThreadPoolExecutor poolMonitor = new ScheduledThreadPoolExecutor(1);
+			
+			//poolMonitor.scheduleAtFixedRate(new QueueMonitor(), 1, 1,TimeUnit.SECONDS);
+			// 接受客户端请求，阻塞端口关闭
+			f.channel().closeFuture().sync();
+		} finally {
+			workerGroup.shutdownGracefully();
+			bossGroup.shutdownGracefully();
+		}
+	}
+
+}
